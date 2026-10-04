@@ -11,12 +11,13 @@ Sistema de **persistencia real** para OpenMuse en Kaggle + acceso público con C
 
 ## Requisito: CPK_INTELLIGENCE_API_KEY
 
-OpenMuse la exige siempre (hasta en modo sample). Sin ella la celda aborta en el paso [4/8] con instrucciones.
+OpenMuse la exige siempre (hasta en modo sample). Sin ella la celda aborta en el paso [4/8] con instrucciones. Es gratis y se saca desde el iPhone, sin laptop ni terminal:
 
-1. Una vez, en tu laptop: `npx copilotkit@latest login` y `npx copilotkit@latest project select`
-2. Copiá la server-only key generada
-3. En Kaggle: Add-ons → Secrets → Add secret, nombre `CPK_INTELLIGENCE_API_KEY`, pegá la key y adjuntá el secreto al notebook
-4. Re-ejecutá la celda
+1. En Safari abrí <https://intelligence.copilotkit.ai> y creá tu cuenta
+2. Creá un proyecto y andá a la página API Keys del proyecto
+3. Copiá la key que empieza con `cpk-...`
+4. En Kaggle: Add-ons → Secrets → Add secret, nombre `CPK_INTELLIGENCE_API_KEY`, pegá la key y adjuntá el secreto al notebook
+5. Re-ejecutá la celda
 
 ## Cómo usarlo
 
