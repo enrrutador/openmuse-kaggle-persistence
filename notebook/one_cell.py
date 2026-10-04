@@ -18,6 +18,7 @@ from datetime import datetime
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
+print("  VERSION: 2026-10-04.4 (si no ves esta version, tu celda tiene codigo viejo pegado)")
 print("=" * 60)
 
 URL_RE = re.compile(r"https://[A-Za-z0-9-]+\.trycloudflare\.com")
@@ -87,6 +88,27 @@ def drain(proc, prefix):
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     return t
+
+
+# ----------------------------------------------------------
+# 0. Limpieza de corridas anteriores (mismo kernel, celda re-ejecutada)
+# ----------------------------------------------------------
+# Sin esto, los procesos viejos siguen ocupando 8787/8081 y la
+# re-ejecución "no cambia nada" (los servidores nuevos no levantan).
+print("[0/8] Liberando procesos/puertos de corridas anteriores...")
+for _port in (8787, 8081):
+    try:
+        subprocess.run(["fuser", "-k", f"{_port}/tcp"],
+                       capture_output=True, timeout=10)
+    except Exception:
+        pass
+try:
+    subprocess.run(["pkill", "-f", "cloudflared"],
+                   capture_output=True, timeout=10)
+except Exception:
+    pass
+time.sleep(2)
+print("  Puertos liberados ✓")
 
 
 # ----------------------------------------------------------

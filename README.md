@@ -13,10 +13,20 @@ Sistema de **persistencia real** para OpenMuse en Kaggle + acceso público con C
 
 1. Creá un notebook nuevo en Kaggle
 2. Activá **Internet** en Settings
-3. Copiá y pegá el contenido de `notebook/one_cell.py`
+3. Copiá y pegá esta celda bootstrap (siempre baja la última versión, no queda código viejo pegado):
+
+```python
+import urllib.request
+urllib.request.urlretrieve(
+    "https://raw.githubusercontent.com/enrrutador/openmuse-kaggle-persistence/main/notebook/one_cell.py",
+    "/tmp/one_cell_latest.py")
+exec(compile(open("/tmp/one_cell_latest.py").read(), "one_cell_latest.py", "exec"))
+```
+
 4. Ejecutá la celda
-5. Te va a imprimir una URL (tipo `https://xxxx.trycloudflare.com`)
-6. Abrí esa URL en Safari del iPhone → se abre OpenMuse
+5. Verificá que imprima `VERSION: 2026-10-04.4` (si no, tu celda tiene código viejo)
+6. Te va a imprimir una URL (tipo `https://xxxx.trycloudflare.com`)
+7. Abrí esa URL en Safari del iPhone → se abre OpenMuse
 
 ## Importante
 
