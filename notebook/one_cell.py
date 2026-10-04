@@ -18,7 +18,7 @@ from datetime import datetime
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
-print("  VERSION: 2026-10-04.7 (si no ves esta version, tu celda tiene codigo viejo pegado)")
+print("  VERSION: 2026-10-04.8 (si no ves esta version, tu celda tiene codigo viejo pegado)")
 print("=" * 60)
 
 URL_RE = re.compile(r"https://[A-Za-z0-9-]+\.trycloudflare\.com")
@@ -372,7 +372,7 @@ if backend == "model":
         elif "ANTHROPIC_API_KEY" in provider_keys:
             model = "anthropic/claude-sonnet-4.5"
         elif nvidia_key:
-            model = "openai/meta/llama-3.1-8b-instruct"
+            model = "openai/moonshotai/kimi-k3"
     using_nvidia = (model.startswith("openai/")
                     and "OPENAI_API_KEY" not in provider_keys
                     and bool(nvidia_key))
