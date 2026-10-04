@@ -18,7 +18,7 @@ from datetime import datetime
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
-print("  VERSION: 2026-10-04.8 (si no ves esta version, tu celda tiene codigo viejo pegado)")
+print("  VERSION: 2026-10-04.9 (si no ves esta version, tu celda tiene codigo viejo pegado)")
 print("=" * 60)
 
 URL_RE = re.compile(r"https://[A-Za-z0-9-]+\.trycloudflare\.com")
@@ -218,7 +218,18 @@ def restore_state():
         print(f"  Error restaurando: {e}")
         return False
 
-restore_state()
+# RESET_DATA=true (secreto o env) borra datos locales y omite restaurar.
+# Útil si el hilo guardado apunta a un proyecto/clave vieja de CopilotKit
+# (error THREAD_NOT_FOUND): se genera un hilo nuevo bajo la key actual.
+if (get_secret("RESET_DATA", quiet=True) or "").strip().lower() in ("1", "true", "yes"):
+    print("  RESET_DATA=true: borrando datos locales, empiezo de cero...")
+    shutil.rmtree(DATA_DIR, ignore_errors=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if STATE_ZIP.exists():
+        STATE_ZIP.unlink()
+    print("  Datos locales borrados ✓ (se generará un hilo nuevo)")
+else:
+    restore_state()
 
 def auto_save_loop():
     while True:
