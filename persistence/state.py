@@ -4,7 +4,6 @@ Guarda y restaura el directorio de datos de OpenMuse.
 """
 
 import os
-import time
 import zipfile
 import shutil
 from pathlib import Path
@@ -18,7 +17,7 @@ class OpenMuseStateManager:
         data_dir: str = "/kaggle/working/openmuse-data",
         state_zip: str = "/kaggle/working/openmuse_state.zip",
         backup_dir: str = "/kaggle/working/backups",
-        max_backups: int = 3,
+        max_backups: int = 5,
     ):
         self.data_dir = Path(data_dir)
         self.state_zip = Path(state_zip)
@@ -40,10 +39,13 @@ class OpenMuseStateManager:
                 for root, dirs, files in os.walk(self.data_dir):
                     for file in files:
                         file_path = Path(root) / file
+                        # Evitar archivos temporales o muy grandes problemáticos
+                        if file.endswith((".tmp", ".lock", ".log")):
+                            continue
                         arcname = file_path.relative_to(self.data_dir)
                         zipf.write(file_path, arcname)
 
-            # Reemplazar el estado principal
+            # Reemplazar el estado principal de forma atómica
             if self.state_zip.exists():
                 self.state_zip.unlink()
             shutil.copy(temp_zip, self.state_zip)
@@ -51,9 +53,13 @@ class OpenMuseStateManager:
             # Mantener solo los últimos N backups
             backups = sorted(self.backup_dir.glob("openmuse_state_*.zip"), reverse=True)
             for old in backups[self.max_backups:]:
-                old.unlink()
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
 
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Estado guardado correctamente ✓")
+            size_mb = self.state_zip.stat().st_size / (1024 * 1024)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Estado guardado correctamente ({size_mb:.1f} MB) ✓")
             return True
         except Exception as e:
             print(f"Error guardando estado: {e}")
@@ -83,3 +89,6 @@ class OpenMuseStateManager:
 
     def get_data_dir(self) -> Path:
         return self.data_dir
+
+    def exists(self) -> bool:
+        return self.state_zip.exists()

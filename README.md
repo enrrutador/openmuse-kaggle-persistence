@@ -10,44 +10,48 @@ Sistema de **persistencia real** para OpenMuse en Kaggle.
 
 El estado (conversaciones, tareas, archivos, base de datos, etc.) se guarda automáticamente cada 5 minutos.
 
+> **Nota:** No usamos ngrok. La exposición pública se dejará para una solución alternativa más adelante.
+
 ## Cómo funciona
 
 1. Al iniciar el notebook se restaura el estado anterior (si existe).
-2. OpenMuse corre normalmente.
-3. Cada 5 minutos se guarda un snapshot completo del estado en `/kaggle/working/openmuse_state.zip`.
-4. Al hacer **Save Version** en Kaggle, el estado queda persistido.
-5. La próxima vez que abras el notebook, se restaura automáticamente.
+2. Se clona e instala OpenMuse.
+3. OpenMuse corre usando el directorio de datos persistente.
+4. Cada 5 minutos se guarda un snapshot completo del estado.
+5. Al hacer **Save Version** en Kaggle, el estado queda persistido para la próxima sesión.
 
-## Estructura
+## Estructura del repo
 
 ```
 openmuse-kaggle-persistence/
 ├── README.md
 ├── notebook/
-│   └── openmuse_kaggle.ipynb   # Notebook principal
+│   └── openmuse_kaggle.ipynb
 ├── persistence/
-│   ├── state.py               # Lógica de guardado/restauración
-│   └── auto_save.py           # Loop de guardado automático
-└── scripts/
-    └── setup.sh               # Instalación de dependencias
+│   ├── state.py
+│   └── auto_save.py
+├── scripts/
+│   └── setup_openmuse.sh
+└── .gitignore
 ```
 
 ## Estado actual
 
 - [x] Repositorio creado
-- [ ] Sistema de persistencia (en progreso)
-- [ ] Notebook completo de Kaggle
-- [ ] Integración con OpenMuse
-- [ ] ngrok + URL pública
-- [ ] Documentación de uso desde iPhone
+- [x] Sistema de persistencia (guardar / restaurar)
+- [x] Auto-save cada 5 minutos
+- [x] Scripts de instalación de OpenMuse
+- [ ] Notebook completo listo para copiar y pegar
+- [ ] Integración final del servidor
+- [ ] Solución de acceso público (sin ngrok)
 
-## Uso rápido (próximamente)
+## Uso (en desarrollo)
 
-1. Fork o clona este repo
-2. Crea un notebook en Kaggle
-3. Copia el contenido de `notebook/openmuse_kaggle.ipynb`
-4. Ejecutá las celdas
+1. Creá un notebook nuevo en Kaggle
+2. Activá **Internet** y **GPU** (recomendado)
+3. Copiá el contenido del notebook de este repo
+4. Ejecutá las celdas en orden
 
 ---
 
-Hecho para funcionar **sin PC**, solo desde el iPhone.
+Hecho para usarse **sin PC**, solo desde el iPhone.
