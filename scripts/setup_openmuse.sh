@@ -1,43 +1,54 @@
 #!/bin/bash
 set -e
 
-echo "=== Instalando OpenMuse en Kaggle ==="
+echo "========================================"
+echo "  Instalando OpenMuse en Kaggle"
+echo "========================================"
 
-# Directorio de trabajo
 cd /kaggle/working
 
-# Clonar OpenMuse si no existe
+# 1. Clonar OpenMuse
 if [ ! -d "openmuse" ]; then
-  echo "Clonando repositorio de OpenMuse..."
+  echo "→ Clonando repositorio de OpenMuse..."
   git clone --depth 1 https://github.com/CopilotKit/OpenMuse.git openmuse
 else
-  echo "OpenMuse ya está clonado."
+  echo "→ OpenMuse ya está clonado."
 fi
 
 cd openmuse
 
-# Verificar Node
-if ! command -v node &> /dev/null; then
-  echo "Node no encontrado. Instalando via nvm..."
+# 2. Asegurar Node 22+
+echo "→ Configurando Node..."
+export NVM_DIR="$HOME/.nvm"
+
+if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+  echo "  Instalando nvm..."
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-  export NVM_DIR="$HOME/.nvm"
-  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-  nvm install 22
-  nvm use 22
 fi
 
-echo "Node version: $(node -v)"
+# Cargar nvm
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-# Instalar pnpm si no está
+# Instalar y usar Node 22
+nvm install 22 --no-progress || true
+nvm use 22
+
+echo "  Node: $(node -v)"
+echo "  npm:  $(npm -v)"
+
+# 3. Instalar pnpm
 if ! command -v pnpm &> /dev/null; then
-  echo "Instalando pnpm..."
+  echo "→ Instalando pnpm..."
   npm install -g pnpm@11.19.0
 fi
 
-echo "pnpm version: $(pnpm -v)"
+echo "  pnpm: $(pnpm -v)"
 
-# Instalar dependencias
-echo "Instalando dependencias de OpenMuse (esto puede tardar)..."
+# 4. Instalar dependencias
+echo "→ Instalando dependencias de OpenMuse (puede tardar varios minutos)..."
 pnpm install --frozen-lockfile || pnpm install
 
-echo "=== Setup de OpenMuse completado ==="
+echo ""
+echo "========================================"
+echo "  Setup de OpenMuse completado ✓"
+echo "========================================"
