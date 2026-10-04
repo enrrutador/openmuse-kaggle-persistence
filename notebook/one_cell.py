@@ -1,6 +1,7 @@
 # ============================================================
 # OPENMUSE EN KAGGLE - TODO EN UNA SOLA CELDA
 # Persistencia real + Cloudflare Tunnel
+# La URL abre directamente la interfaz de OpenMuse
 # ============================================================
 
 import os
@@ -14,7 +15,7 @@ from pathlib import Path
 from datetime import datetime
 
 print("=" * 60)
-print("  OpenMuse Kaggle - Persistencia + Cloudflare Tunnel")
+print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
 print("=" * 60)
 
 # ----------------------------------------------------------
@@ -22,20 +23,20 @@ print("=" * 60)
 # ----------------------------------------------------------
 REPO_DIR = Path("/kaggle/working/openmuse-kaggle-persistence")
 if not REPO_DIR.exists():
-    print("\n[1/7] Clonando sistema de persistencia...")
+    print("\n[1/8] Clonando sistema de persistencia...")
     subprocess.run(
         ["git", "clone", "https://github.com/enrrutador/openmuse-kaggle-persistence.git", str(REPO_DIR)],
         check=True,
     )
 else:
-    print("\n[1/7] Sistema de persistencia ya existe.")
+    print("\n[1/8] Sistema de persistencia ya existe.")
 
 sys.path.insert(0, str(REPO_DIR))
 
 # ----------------------------------------------------------
-# 2. Sistema de persistencia (inline para que sea autocontenido)
+# 2. Sistema de persistencia
 # ----------------------------------------------------------
-print("[2/7] Configurando persistencia...")
+print("[2/8] Configurando persistencia...")
 
 DATA_DIR = Path("/kaggle/working/openmuse-data")
 STATE_ZIP = Path("/kaggle/working/openmuse_state.zip")
@@ -64,7 +65,6 @@ def save_state(reason="auto"):
         if STATE_ZIP.exists():
             STATE_ZIP.unlink()
         shutil.move(str(temp_zip), str(STATE_ZIP))
-        # limpiar backups viejos
         backups = sorted(BACKUP_DIR.glob("state_*.zip"), reverse=True)
         for old in backups[5:]:
             try:
@@ -97,7 +97,6 @@ def restore_state():
 
 restore_state()
 
-# Auto-save cada 5 minutos
 def auto_save_loop():
     while True:
         time.sleep(5 * 60)
@@ -109,7 +108,7 @@ print("  Auto-save cada 5 minutos activado ✓")
 # ----------------------------------------------------------
 # 3. Instalar OpenMuse
 # ----------------------------------------------------------
-print("\n[3/7] Instalando OpenMuse (puede tardar)...")
+print("\n[3/8] Instalando OpenMuse (puede tardar)...")
 
 OPENMUSE_DIR = Path("/kaggle/working/openmuse")
 if not OPENMUSE_DIR.exists():
@@ -118,7 +117,6 @@ if not OPENMUSE_DIR.exists():
         check=True,
     )
 
-# Node via nvm
 os.environ["NVM_DIR"] = str(Path.home() / ".nvm")
 nvm_sh = Path.home() / ".nvm" / "nvm.sh"
 
@@ -126,7 +124,6 @@ if not nvm_sh.exists():
     print("  Instalando nvm + Node 22...")
     subprocess.run("curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash", shell=True, check=True)
 
-# Cargar nvm y usar Node 22 dentro de un bash
 def run_with_node(cmd, cwd=None):
     full = f'source "$NVM_DIR/nvm.sh" && nvm install 22 --no-progress && nvm use 22 && {cmd}'
     return subprocess.run(full, shell=True, cwd=cwd, executable="/bin/bash")
@@ -139,8 +136,9 @@ run_with_node("pnpm install --frozen-lockfile || pnpm install", cwd=str(OPENMUSE
 # ----------------------------------------------------------
 # 4. Configurar variables de entorno
 # ----------------------------------------------------------
-print("\n[4/7] Configurando entorno...")
+print("\n[4/8] Configurando entorno...")
 
+# IMPORTANTE: PUBLIC_API_URL se actualizará después con la URL del túnel
 env_vars = {
     "DATA_DIR": str(DATA_DIR),
     "WORKSPACE_MODE": "sample",
@@ -151,6 +149,7 @@ env_vars = {
     "TASK_WORKER_ENABLED": "true",
     "WEB_SEARCH_ENABLED": "true",
     "COMPUTER_ENABLED": "false",
+    "EXPO_PUBLIC_API_URL": "http://localhost:8787",
 }
 
 for k, v in env_vars.items():
@@ -161,11 +160,11 @@ env_path.write_text("\n".join(f"{k}={v}" for k, v in env_vars.items()) + "\n")
 print("  .env escrito ✓")
 
 # ----------------------------------------------------------
-# 5. Arrancar OpenMuse
+# 5. Arrancar API de OpenMuse (puerto 8787)
 # ----------------------------------------------------------
-print("\n[5/7] Arrancando servidor OpenMuse...")
+print("\n[5/8] Arrancando API de OpenMuse (puerto 8787)...")
 
-server_proc = subprocess.Popen(
+api_proc = subprocess.Popen(
     ["bash", "-c", 'source "$NVM_DIR/nvm.sh" && nvm use 22 && pnpm dev'],
     cwd=str(OPENMUSE_DIR),
     stdout=subprocess.PIPE,
@@ -174,24 +173,33 @@ server_proc = subprocess.Popen(
     env=os.environ.copy(),
 )
 
-print("  Esperando a que el servidor levante...")
+print("  Esperando API...")
+time.sleep(12)
+print("  API en background ✓")
+
+# ----------------------------------------------------------
+# 6. Arrancar interfaz web de OpenMuse (puerto 8081)
+# ----------------------------------------------------------
+print("\n[6/8] Arrancando interfaz web de OpenMuse (puerto 8081)...")
+
+web_proc = subprocess.Popen(
+    ["bash", "-c", 'source "$NVM_DIR/nvm.sh" && nvm use 22 && pnpm dev:web'],
+    cwd=str(OPENMUSE_DIR),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    env=os.environ.copy(),
+)
+
+print("  Esperando interfaz web...")
 time.sleep(15)
-
-# Mostrar algunas líneas de log
-print("  --- logs ---")
-for _ in range(25):
-    line = server_proc.stdout.readline()
-    if not line:
-        break
-    print("  " + line.rstrip())
-print("  Servidor en background ✓")
+print("  Interfaz web en background ✓")
 
 # ----------------------------------------------------------
-# 6. Instalar y arrancar Cloudflare Tunnel
+# 7. Cloudflare Tunnel apuntando a la interfaz web (8081)
 # ----------------------------------------------------------
-print("\n[6/7] Configurando Cloudflare Tunnel...")
+print("\n[7/8] Configurando Cloudflare Tunnel (apunta a la interfaz)...")
 
-# Descargar cloudflared
 cloudflared_path = Path("/kaggle/working/cloudflared")
 if not cloudflared_path.exists():
     print("  Descargando cloudflared...")
@@ -205,42 +213,42 @@ if not cloudflared_path.exists():
     )
     cloudflared_path.chmod(0o755)
 
-print("  Iniciando túnel...")
+print("  Iniciando túnel hacia el puerto 8081...")
 tunnel_proc = subprocess.Popen(
-    [str(cloudflared_path), "tunnel", "--url", "http://localhost:8787"],
+    [str(cloudflared_path), "tunnel", "--url", "http://localhost:8081"],
     stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT,
     text=True,
 )
 
-# Esperar y capturar la URL
 public_url = None
 print("  Esperando URL pública...")
-for _ in range(40):
+for _ in range(50):
     line = tunnel_proc.stdout.readline()
     if not line:
-        time.sleep(0.5)
+        time.sleep(0.4)
         continue
     print("  " + line.rstrip())
     if "trycloudflare.com" in line:
-        # Extraer la URL
         for part in line.split():
             if "trycloudflare.com" in part:
-                public_url = part.strip()
+                public_url = part.strip().rstrip("/")
                 break
         if public_url:
             break
 
 # ----------------------------------------------------------
-# 7. Resultado final
+# 8. Resultado final
 # ----------------------------------------------------------
 print("\n" + "=" * 60)
 if public_url:
     print("  LISTO")
-    print(f"  URL pública: {public_url}")
-    print("  Poné esta URL en OpenCode u otra herramienta.")
+    print(f"  Abrí esta URL en el iPhone:")
+    print(f"  {public_url}")
+    print("")
+    print("  Esa URL abre directamente la interfaz de OpenMuse.")
 else:
-    print("  Servidor arrancado, pero no se pudo capturar la URL del túnel.")
+    print("  Servidores arrancados, pero no se pudo capturar la URL.")
     print("  Revisá los logs de cloudflared arriba.")
 print("  Auto-save cada 5 minutos activo.")
 print("  Para forzar guardado: save_state('manual')")

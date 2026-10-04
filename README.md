@@ -6,23 +6,23 @@ Sistema de **persistencia real** para OpenMuse en Kaggle + acceso público con C
 
 - Se cae la sesión de Kaggle → reiniciás → continúa donde lo dejaste
 - Guardado automático cada 5 minutos
-- URL pública con Cloudflare Tunnel (sin ngrok)
+- La URL pública **abre directamente la interfaz de OpenMuse**
 - **Todo en una sola celda**
 
 ## Cómo usarlo
 
 1. Creá un notebook nuevo en Kaggle
 2. Activá **Internet** en Settings
-3. Copiá y pegá **solo la celda** que está en `notebook/one_cell.py`
-4. Ejecutá
-5. Te va a imprimir una URL pública (tipo `https://xxxx.trycloudflare.com`)
-6. Esa URL la podés usar en OpenCode u otra herramienta
+3. Copiá y pegá el contenido de `notebook/one_cell.py`
+4. Ejecutá la celda
+5. Te va a imprimir una URL (tipo `https://xxxx.trycloudflare.com`)
+6. Abrí esa URL en Safari del iPhone → se abre OpenMuse
 
 ## Importante
 
 - La URL de Cloudflare cambia cada vez que reiniciás el notebook
 - Para que el estado sobreviva a reinicios largos, hacé **Save Version** de vez en cuando
-- Estamos usando modo `sample` de OpenMuse (no necesita claves)
+- Estamos usando modo `sample` de OpenMuse (no necesita claves de OpenAI ni CopilotKit)
 
 ## Repo
 
