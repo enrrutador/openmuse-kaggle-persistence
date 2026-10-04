@@ -23,6 +23,7 @@ OpenMuse la exige siempre (hasta en modo sample). Sin ella la celda aborta en el
 
 Sin esto queda el agente de ejemplo (respuestas guionadas). Para un modelo de verdad, también con secretos de Kaggle (tildá cada uno) y re-ejecutá:
 
+- **NVIDIA (gratis, la que ya tenés)**: tildá el secreto `NVIDIA_API_KEY` (usa `openai/meta/llama-3.1-8b-instruct` vía su gateway OpenAI por defecto)
 - **Gratis desde el iPhone**: cuenta en <https://aistudio.google.com> → Get API Key → secreto `GOOGLE_API_KEY` (usa `google/gemini-2.5-pro` por defecto)
 - OpenAI: secreto `OPENAI_API_KEY` (usa `openai/gpt-5` por defecto)
 - Anthropic: secreto `ANTHROPIC_API_KEY` (usa `anthropic/claude-sonnet-4.5` por defecto)

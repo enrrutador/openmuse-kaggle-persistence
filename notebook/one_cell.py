@@ -18,7 +18,7 @@ from datetime import datetime
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
-print("  VERSION: 2026-10-04.6 (si no ves esta version, tu celda tiene codigo viejo pegado)")
+print("  VERSION: 2026-10-04.7 (si no ves esta version, tu celda tiene codigo viejo pegado)")
 print("=" * 60)
 
 URL_RE = re.compile(r"https://[A-Za-z0-9-]+\.trycloudflare\.com")
@@ -355,8 +355,13 @@ for _k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
     if _v:
         provider_keys[_k] = _v
         print(f"  {_k} presente ✓ (valor oculto)")
+# NVIDIA NIM es un gateway compatible con OpenAI: se usa con prefijo openai/
+# y OPENAI_BASE_URL apuntando a integrate.api.nvidia.com.
+nvidia_key = get_secret("NVIDIA_API_KEY", quiet=True)
+if nvidia_key:
+    print("  NVIDIA_API_KEY presente ✓ (vale como gateway OpenAI)")
 backend = (get_secret("AGENT_BACKEND", quiet=True) or "").strip() or (
-    "model" if provider_keys else "sample")
+    "model" if (provider_keys or nvidia_key) else "sample")
 model = (get_secret("MODEL", quiet=True) or "").strip()
 if backend == "model":
     if not model:
@@ -366,13 +371,28 @@ if backend == "model":
             model = "openai/gpt-5"
         elif "ANTHROPIC_API_KEY" in provider_keys:
             model = "anthropic/claude-sonnet-4.5"
+        elif nvidia_key:
+            model = "openai/meta/llama-3.1-8b-instruct"
+    using_nvidia = (model.startswith("openai/")
+                    and "OPENAI_API_KEY" not in provider_keys
+                    and bool(nvidia_key))
+    if using_nvidia:
+        provider_keys["OPENAI_API_KEY"] = nvidia_key
     if not model or not provider_keys:
         print("  [WARN] AGENT_BACKEND=model pero falta MODEL o provider key: el chat dará 503.")
     else:
-        print(f"  Modelo real activado: {model} ✓ (backend=model)")
+        _need = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+                 "google": "GOOGLE_API_KEY", "gemini": "GOOGLE_API_KEY"}
+        _want = _need.get(model.split("/")[0].lower(), "")
+        if _want and _want not in provider_keys:
+            print(f"  [WARN] MODEL={model} pero falta {_want}: el chat dará 503.")
+        else:
+            print(f"  Modelo real activado: {model} ✓ (backend=model)")
+            if using_nvidia:
+                print("  Gateway NVIDIA NIM ✓ (gratis, vía integrate.api.nvidia.com)")
 else:
     print("  Agente de ejemplo (sample). Para un modelo real agregá el secreto")
-    print("  de tu provider (GOOGLE_API_KEY gratis, OPENAI_API_KEY o ANTHROPIC_API_KEY).")
+    print("  de tu provider (NVIDIA_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY o ANTHROPIC_API_KEY).")
 
 env_vars = {
     "DATA_DIR": str(DATA_DIR),
@@ -391,6 +411,8 @@ env_vars = {
 if model:
     env_vars["MODEL"] = model
 env_vars.update(provider_keys)
+if using_nvidia:
+    env_vars["OPENAI_BASE_URL"] = "https://integrate.api.nvidia.com/v1"
 
 for k, v in env_vars.items():
     os.environ[k] = v
