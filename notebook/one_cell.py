@@ -5,18 +5,89 @@
 # ============================================================
 
 import os
+import re
 import sys
 import time
 import subprocess
 import threading
 import zipfile
 import shutil
+import urllib.request
 from pathlib import Path
 from datetime import datetime
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
 print("=" * 60)
+
+URL_RE = re.compile(r"https://[A-Za-z0-9-]+\.trycloudflare\.com")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def clean(s: str) -> str:
+    return ANSI_RE.sub("", s).strip()
+
+
+def wait_for_tunnel_url(proc, timeout=90, label="túnel"):
+    """Lee la salida de cloudflared hasta encontrar https://xxx.trycloudflare.com.
+
+    FIX del bug anterior: antes se hacía `if "trycloudflare.com" in line`,
+    lo que matcheaba la línea informativa
+    "Requesting new quick Tunnel on trycloudflare.com..." y guardaba
+    el literal "trycloudflare.com..." como URL. Ahora se exige regex
+    https://<subdominio>.trycloudflare.com.
+    """
+    end = time.time() + timeout
+    while time.time() < end:
+        if proc.poll() is not None:
+            print(f"  [WARN] proceso del {label} terminó (exit={proc.poll()})")
+            break
+        line = proc.stdout.readline()
+        if not line:
+            time.sleep(0.5)
+            continue
+        c = clean(line)
+        if c:
+            print("  " + c)
+        m = URL_RE.search(c)
+        if m:
+            url = m.group(0).rstrip("/")
+            # Quita restos tipo "|" o "," que a veces pega cloudflared
+            url = url.strip("|, ")
+            return url
+    return None
+
+
+def wait_for_http(url, timeout=180, label="servicio"):
+    """Espera hasta que url responda 2xx/3xx. Retorna True/False."""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                if 200 <= r.status < 400:
+                    print(f"  {label} responde ✓ ({url} -> {r.status})")
+                    return True
+        except Exception:
+            pass
+        time.sleep(3)
+    print(f"  [WARN] {label} no respondió en {timeout}s: {url}")
+    return False
+
+
+def drain(proc, prefix):
+    """Hilo daemon que imprime logs sin bloquear el pipe."""
+    def _run():
+        try:
+            for line in proc.stdout:
+                c = clean(line)
+                if c:
+                    print(f"  [{prefix}] {c}", flush=True)
+        except Exception:
+            pass
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return t
+
 
 # ----------------------------------------------------------
 # 1. Clonar este repo de persistencia
@@ -134,71 +205,13 @@ print("  Instalando dependencias de OpenMuse...")
 run_with_node("pnpm install --frozen-lockfile || pnpm install", cwd=str(OPENMUSE_DIR))
 
 # ----------------------------------------------------------
-# 4. Configurar variables de entorno
+# 4. cloudflared + túnel API (primero, para conocer la URL pública)
 # ----------------------------------------------------------
-print("\n[4/8] Configurando entorno...")
-
-# IMPORTANTE: PUBLIC_API_URL se actualizará después con la URL del túnel
-env_vars = {
-    "DATA_DIR": str(DATA_DIR),
-    "WORKSPACE_MODE": "sample",
-    "AGENT_BACKEND": "sample",
-    "PORT": "8787",
-    "HOST": "0.0.0.0",
-    "PUBLIC_API_URL": "http://localhost:8787",
-    "TASK_WORKER_ENABLED": "true",
-    "WEB_SEARCH_ENABLED": "true",
-    "COMPUTER_ENABLED": "false",
-    "EXPO_PUBLIC_API_URL": "http://localhost:8787",
-}
-
-for k, v in env_vars.items():
-    os.environ[k] = v
-
-env_path = OPENMUSE_DIR / ".env"
-env_path.write_text("\n".join(f"{k}={v}" for k, v in env_vars.items()) + "\n")
-print("  .env escrito ✓")
-
-# ----------------------------------------------------------
-# 5. Arrancar API de OpenMuse (puerto 8787)
-# ----------------------------------------------------------
-print("\n[5/8] Arrancando API de OpenMuse (puerto 8787)...")
-
-api_proc = subprocess.Popen(
-    ["bash", "-c", 'source "$NVM_DIR/nvm.sh" && nvm use 22 && pnpm dev'],
-    cwd=str(OPENMUSE_DIR),
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-    env=os.environ.copy(),
-)
-
-print("  Esperando API...")
-time.sleep(12)
-print("  API en background ✓")
-
-# ----------------------------------------------------------
-# 6. Arrancar interfaz web de OpenMuse (puerto 8081)
-# ----------------------------------------------------------
-print("\n[6/8] Arrancando interfaz web de OpenMuse (puerto 8081)...")
-
-web_proc = subprocess.Popen(
-    ["bash", "-c", 'source "$NVM_DIR/nvm.sh" && nvm use 22 && pnpm dev:web'],
-    cwd=str(OPENMUSE_DIR),
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-    env=os.environ.copy(),
-)
-
-print("  Esperando interfaz web...")
-time.sleep(15)
-print("  Interfaz web en background ✓")
-
-# ----------------------------------------------------------
-# 7. Cloudflare Tunnel apuntando a la interfaz web (8081)
-# ----------------------------------------------------------
-print("\n[7/8] Configurando Cloudflare Tunnel (apunta a la interfaz)...")
+# La web (Expo) incrusta EXPO_PUBLIC_API_URL al arrancar. Si se deja
+# en localhost, el iPhone carga la web pero falla al llamar a la API.
+# Por eso se crea primero el túnel de la API y luego se arranca todo
+# con la URL pública ya conocida.
+print("\n[4/8] Preparando cloudflared + túnel de API (8787)...")
 
 cloudflared_path = Path("/kaggle/working/cloudflared")
 if not cloudflared_path.exists():
@@ -212,44 +225,134 @@ if not cloudflared_path.exists():
         check=True,
     )
     cloudflared_path.chmod(0o755)
+else:
+    print("  cloudflared ya existe ✓")
 
-print("  Iniciando túnel hacia el puerto 8081...")
-tunnel_proc = subprocess.Popen(
+print("  Iniciando túnel API hacia http://localhost:8787 ...")
+api_tunnel = subprocess.Popen(
+    [str(cloudflared_path), "tunnel", "--url", "http://localhost:8787"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+)
+
+print("  Esperando URL pública de la API (hasta 90s)...")
+api_url = wait_for_tunnel_url(api_tunnel, timeout=90, label="túnel API")
+if api_url:
+    print(f"  API pública: {api_url} ✓")
+    drain(api_tunnel, "tunnel-api")
+else:
+    print("  [WARN] no se capturó URL de API, uso fallback localhost.")
+    print("  (La web NO funcionará desde el iPhone sin URL pública de API.)")
+    api_url = "http://localhost:8787"
+
+# ----------------------------------------------------------
+# 5. Variables de entorno (ya con la URL pública real)
+# ----------------------------------------------------------
+print("\n[5/8] Configurando entorno...")
+
+env_vars = {
+    "DATA_DIR": str(DATA_DIR),
+    "WORKSPACE_MODE": "sample",
+    "AGENT_BACKEND": "sample",
+    "PORT": "8787",
+    "HOST": "0.0.0.0",
+    "PUBLIC_API_URL": api_url,
+    "TASK_WORKER_ENABLED": "true",
+    "WEB_SEARCH_ENABLED": "true",
+    "COMPUTER_ENABLED": "false",
+    "EXPO_PUBLIC_API_URL": api_url,
+}
+
+for k, v in env_vars.items():
+    os.environ[k] = v
+
+env_path = OPENMUSE_DIR / ".env"
+env_path.write_text("\n".join(f"{k}={v}" for k, v in env_vars.items()) + "\n")
+print(f"  .env escrito ✓ (PUBLIC_API_URL={api_url})")
+
+# ----------------------------------------------------------
+# 6. Arrancar API de OpenMuse (puerto 8787)
+# ----------------------------------------------------------
+print("\n[6/8] Arrancando API de OpenMuse (puerto 8787)...")
+
+api_proc = subprocess.Popen(
+    ["bash", "-c", 'source "$NVM_DIR/nvm.sh" && nvm use 22 && pnpm dev'],
+    cwd=str(OPENMUSE_DIR),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    env=os.environ.copy(),
+)
+drain(api_proc, "api")
+
+wait_for_http("http://localhost:8787/api/health", timeout=180, label="API")
+print("  API en background ✓")
+
+# ----------------------------------------------------------
+# 7. Arrancar web (8081) + túnel web
+# ----------------------------------------------------------
+print("\n[7/8] Arrancando interfaz web de OpenMuse (puerto 8081)...")
+
+web_proc = subprocess.Popen(
+    ["bash", "-c", 'source "$NVM_DIR/nvm.sh" && nvm use 22 && pnpm dev:web'],
+    cwd=str(OPENMUSE_DIR),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    env=os.environ.copy(),
+)
+drain(web_proc, "web")
+
+wait_for_http("http://localhost:8081/", timeout=240, label="Web")
+print("  Interfaz web en background ✓")
+
+print("\n  Iniciando túnel web hacia http://localhost:8081 ...")
+web_tunnel = subprocess.Popen(
     [str(cloudflared_path), "tunnel", "--url", "http://localhost:8081"],
     stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT,
     text=True,
 )
 
-public_url = None
-print("  Esperando URL pública...")
-for _ in range(50):
-    line = tunnel_proc.stdout.readline()
-    if not line:
-        time.sleep(0.4)
-        continue
-    print("  " + line.rstrip())
-    if "trycloudflare.com" in line:
-        for part in line.split():
-            if "trycloudflare.com" in part:
-                public_url = part.strip().rstrip("/")
-                break
-        if public_url:
-            break
+print("  Esperando URL pública de la web (hasta 90s)...")
+web_url = wait_for_tunnel_url(web_tunnel, timeout=90, label="túnel web")
+if web_url:
+    print(f"  Web pública: {web_url} ✓")
+    drain(web_tunnel, "tunnel-web")
+else:
+    print("  [WARN] no se capturó URL web.")
+    web_url = None
 
 # ----------------------------------------------------------
-# 8. Resultado final
+# 8. Resultado final + keep-alive
 # ----------------------------------------------------------
 print("\n" + "=" * 60)
-if public_url:
+if web_url:
     print("  LISTO")
-    print(f"  Abrí esta URL en el iPhone:")
-    print(f"  {public_url}")
+    print("  Abrí esta URL en el iPhone:")
+    print(f"  {web_url}")
     print("")
+    print(f"  API: {api_url}")
     print("  Esa URL abre directamente la interfaz de OpenMuse.")
 else:
-    print("  Servidores arrancados, pero no se pudo capturar la URL.")
-    print("  Revisá los logs de cloudflared arriba.")
+    print("  Servidores arrancados, pero no se pudo capturar la URL web.")
+    print(f"  API pública (por si sirve): {api_url}")
+    print("  Revisá los logs [tunnel-web] arriba.")
 print("  Auto-save cada 5 minutos activo.")
 print("  Para forzar guardado: save_state('manual')")
 print("=" * 60)
+
+# Keep-alive: la celda queda viva para que Kaggle no mate los procesos.
+# Cada 60s verifica que API/web/túneles sigan vivos.
+print("\n[keep-alive] Celda viva. Ctrl+C / Stop para terminar.")
+try:
+    while True:
+        time.sleep(60)
+        for name, p in [("api", api_proc), ("web", web_proc),
+                        ("tunnel-api", api_tunnel), ("tunnel-web", web_tunnel)]:
+            if p.poll() is not None:
+                print(f"  [WARN] {name} terminó con exit={p.poll()}")
+        save_state("keep-alive cada 60 min (placeholder)") if False else None
+except KeyboardInterrupt:
+    print("  Keep-alive interrumpido.")
