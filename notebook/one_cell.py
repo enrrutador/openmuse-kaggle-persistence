@@ -100,7 +100,12 @@ if not REPO_DIR.exists():
         check=True,
     )
 else:
-    print("\n[1/8] Sistema de persistencia ya existe.")
+    print("\n[1/8] Sistema de persistencia ya existe. Actualizando...")
+    try:
+        subprocess.run(["git", "-C", str(REPO_DIR), "pull", "--ff-only"], check=True)
+        print("  Repo actualizado ✓ (así la celda siempre usa el código corregido)")
+    except Exception as e:
+        print(f"  [WARN] no se pudo actualizar ({e}), sigo con la copia local.")
 
 sys.path.insert(0, str(REPO_DIR))
 
