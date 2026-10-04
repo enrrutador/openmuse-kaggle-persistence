@@ -18,7 +18,7 @@ from datetime import datetime
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
-print("  VERSION: 2026-10-04.5 (si no ves esta version, tu celda tiene codigo viejo pegado)")
+print("  VERSION: 2026-10-04.6 (si no ves esta version, tu celda tiene codigo viejo pegado)")
 print("=" * 60)
 
 URL_RE = re.compile(r"https://[A-Za-z0-9-]+\.trycloudflare\.com")
@@ -90,23 +90,29 @@ def drain(proc, prefix):
     return t
 
 
+def get_secret(name, quiet=False):
+    """Lee un secreto del entorno o de los secretos de Kaggle (sin mostrarlo)."""
+    v = os.environ.get(name, "").strip()
+    if v:
+        return v
+    try:
+        from kaggle_secrets import UserSecretsClient
+        v = UserSecretsClient().get_secret(name) or ""
+        if v.strip():
+            return v.strip()
+    except Exception as e:
+        if not quiet:
+            print(f"  (no se pudo leer el secreto de Kaggle: {e})")
+    return ""
+
+
 def get_cpk_key():
     """Lee CPK_INTELLIGENCE_API_KEY del entorno o del secreto de Kaggle.
 
     OpenMuse la exige siempre (hasta en modo sample). Sin ella la API
     muere al arrancar con 'OpenMuse requires CPK_INTELLIGENCE_API_KEY'.
     """
-    v = os.environ.get("CPK_INTELLIGENCE_API_KEY", "").strip()
-    if v:
-        return v
-    try:
-        from kaggle_secrets import UserSecretsClient
-        v = UserSecretsClient().get_secret("CPK_INTELLIGENCE_API_KEY") or ""
-        if v.strip():
-            return v.strip()
-    except Exception as e:
-        print(f"  (no se pudo leer el secreto de Kaggle: {e})")
-    return ""
+    return get_secret("CPK_INTELLIGENCE_API_KEY")
 
 
 # ----------------------------------------------------------
@@ -338,10 +344,40 @@ print("\n[5/8] Configurando entorno...")
 allowed = "http://localhost:8081,http://127.0.0.1:8081"
 if web_url:
     allowed += f",{web_url}"
+
+# Modelo real (opcional): secretos de provider key como en Kaggle.
+# Sin keys queda el agente de ejemplo (sample). Con alguna key se activa
+# backend=model automáticamente (salvo AGENT_BACKEND explícito).
+# Formato MODEL: "proveedor/modelo", ej. "google/gemini-2.5-pro".
+provider_keys = {}
+for _k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+    _v = get_secret(_k, quiet=True)
+    if _v:
+        provider_keys[_k] = _v
+        print(f"  {_k} presente ✓ (valor oculto)")
+backend = (get_secret("AGENT_BACKEND", quiet=True) or "").strip() or (
+    "model" if provider_keys else "sample")
+model = (get_secret("MODEL", quiet=True) or "").strip()
+if backend == "model":
+    if not model:
+        if "GOOGLE_API_KEY" in provider_keys:
+            model = "google/gemini-2.5-pro"
+        elif "OPENAI_API_KEY" in provider_keys:
+            model = "openai/gpt-5"
+        elif "ANTHROPIC_API_KEY" in provider_keys:
+            model = "anthropic/claude-sonnet-4.5"
+    if not model or not provider_keys:
+        print("  [WARN] AGENT_BACKEND=model pero falta MODEL o provider key: el chat dará 503.")
+    else:
+        print(f"  Modelo real activado: {model} ✓ (backend=model)")
+else:
+    print("  Agente de ejemplo (sample). Para un modelo real agregá el secreto")
+    print("  de tu provider (GOOGLE_API_KEY gratis, OPENAI_API_KEY o ANTHROPIC_API_KEY).")
+
 env_vars = {
     "DATA_DIR": str(DATA_DIR),
     "WORKSPACE_MODE": "sample",
-    "AGENT_BACKEND": "sample",
+    "AGENT_BACKEND": backend,
     "PORT": "8787",
     "HOST": "127.0.0.1",
     "PUBLIC_API_URL": api_url,
@@ -352,6 +388,9 @@ env_vars = {
     "COMPUTER_ENABLED": "false",
     "EXPO_PUBLIC_API_URL": api_url,
 }
+if model:
+    env_vars["MODEL"] = model
+env_vars.update(provider_keys)
 
 for k, v in env_vars.items():
     os.environ[k] = v

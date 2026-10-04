@@ -19,6 +19,17 @@ OpenMuse la exige siempre (hasta en modo sample). Sin ella la celda aborta en el
 4. En Kaggle: Add-ons → Secrets → Add secret, nombre `CPK_INTELLIGENCE_API_KEY`, pegá la key y adjuntá el secreto al notebook
 5. Re-ejecutá la celda
 
+## Modelo real (opcional)
+
+Sin esto queda el agente de ejemplo (respuestas guionadas). Para un modelo de verdad, también con secretos de Kaggle (tildá cada uno) y re-ejecutá:
+
+- **Gratis desde el iPhone**: cuenta en <https://aistudio.google.com> → Get API Key → secreto `GOOGLE_API_KEY` (usa `google/gemini-2.5-pro` por defecto)
+- OpenAI: secreto `OPENAI_API_KEY` (usa `openai/gpt-5` por defecto)
+- Anthropic: secreto `ANTHROPIC_API_KEY` (usa `anthropic/claude-sonnet-4.5` por defecto)
+- Otro modelo del mismo provider: secreto extra `MODEL`, ej. `google/gemini-2.5-flash`
+
+Con alguna provider key la celda activa `backend=model` sola. La celda confirma con `Modelo real activado: ... ✓`.
+
 ## Cómo usarlo
 
 1. Creá un notebook nuevo en Kaggle
