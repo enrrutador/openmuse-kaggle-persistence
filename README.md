@@ -9,6 +9,15 @@ Sistema de **persistencia real** para OpenMuse en Kaggle + acceso público con C
 - La URL pública **abre directamente la interfaz de OpenMuse**
 - **Todo en una sola celda**
 
+## Requisito: CPK_INTELLIGENCE_API_KEY
+
+OpenMuse la exige siempre (hasta en modo sample). Sin ella la celda aborta en el paso [4/8] con instrucciones.
+
+1. Una vez, en tu laptop: `npx copilotkit@latest login` y `npx copilotkit@latest project select`
+2. Copiá la server-only key generada
+3. En Kaggle: Add-ons → Secrets → Add secret, nombre `CPK_INTELLIGENCE_API_KEY`, pegá la key y adjuntá el secreto al notebook
+4. Re-ejecutá la celda
+
 ## Cómo usarlo
 
 1. Creá un notebook nuevo en Kaggle

@@ -18,7 +18,7 @@ from datetime import datetime
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
-print("  VERSION: 2026-10-04.4 (si no ves esta version, tu celda tiene codigo viejo pegado)")
+print("  VERSION: 2026-10-04.5 (si no ves esta version, tu celda tiene codigo viejo pegado)")
 print("=" * 60)
 
 URL_RE = re.compile(r"https://[A-Za-z0-9-]+\.trycloudflare\.com")
@@ -88,6 +88,25 @@ def drain(proc, prefix):
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     return t
+
+
+def get_cpk_key():
+    """Lee CPK_INTELLIGENCE_API_KEY del entorno o del secreto de Kaggle.
+
+    OpenMuse la exige siempre (hasta en modo sample). Sin ella la API
+    muere al arrancar con 'OpenMuse requires CPK_INTELLIGENCE_API_KEY'.
+    """
+    v = os.environ.get("CPK_INTELLIGENCE_API_KEY", "").strip()
+    if v:
+        return v
+    try:
+        from kaggle_secrets import UserSecretsClient
+        v = UserSecretsClient().get_secret("CPK_INTELLIGENCE_API_KEY") or ""
+        if v.strip():
+            return v.strip()
+    except Exception as e:
+        print(f"  (no se pudo leer el secreto de Kaggle: {e})")
+    return ""
 
 
 # ----------------------------------------------------------
@@ -232,13 +251,31 @@ print("  Instalando dependencias de OpenMuse...")
 run_with_node("pnpm install --frozen-lockfile || pnpm install", cwd=str(OPENMUSE_DIR))
 
 # ----------------------------------------------------------
-# 4. cloudflared + túnel API (primero, para conocer la URL pública)
+# 4. Clave CPK + cloudflared + túneles API y WEB (antes de arrancar nada)
 # ----------------------------------------------------------
-# La web (Expo) incrusta EXPO_PUBLIC_API_URL al arrancar. Si se deja
-# en localhost, el iPhone carga la web pero falla al llamar a la API.
-# Por eso se crea primero el túnel de la API y luego se arranca todo
-# con la URL pública ya conocida.
-print("\n[4/8] Preparando cloudflared + túnel de API (8787)...")
+# - OpenMuse exige CPK_INTELLIGENCE_API_KEY hasta en modo sample. Se lee
+#   del entorno o del secreto de Kaggle "CPK_INTELLIGENCE_API_KEY".
+#   Sin ella la API muere al arrancar: se aborta acá con instrucciones.
+# - La web (Expo) incrusta EXPO_PUBLIC_API_URL al arrancar y la API valida
+#   CORS contra ALLOWED_ORIGINS al arrancar. Por eso los DOS túneles se
+#   crean primero (funcionan aunque el backend aún esté caído) y luego se
+#   arranca todo con las URLs públicas ya conocidas.
+print("\n[4/8] Verificando clave + preparando túneles...")
+
+cpk_key = get_cpk_key()
+if not cpk_key:
+    print("\n" + "=" * 60)
+    print("  FALTA CPK_INTELLIGENCE_API_KEY — la API no puede arrancar sin ella.")
+    print("  Cómo obtenerla (una vez, en tu laptop):")
+    print("    npx copilotkit@latest login")
+    print("    npx copilotkit@latest project select")
+    print("  Copiá la server-only key generada y en Kaggle:")
+    print("    Add-ons -> Secrets -> Add secret")
+    print('    nombre: CPK_INTELLIGENCE_API_KEY, valor: la key. Adjuntá el')
+    print("    secreto al notebook y re-ejecutá la celda.")
+    print("=" * 60)
+    raise SystemExit("Falta CPK_INTELLIGENCE_API_KEY")
+print("  CPK_INTELLIGENCE_API_KEY presente ✓ (no se muestra por seguridad)")
 
 cloudflared_path = Path("/kaggle/working/cloudflared")
 if not cloudflared_path.exists():
@@ -273,18 +310,43 @@ else:
     print("  (La web NO funcionará desde el iPhone sin URL pública de API.)")
     api_url = "http://localhost:8787"
 
+print("  Iniciando túnel WEB hacia http://localhost:8081 ...")
+web_tunnel = subprocess.Popen(
+    [str(cloudflared_path), "tunnel", "--url", "http://localhost:8081"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+)
+
+print("  Esperando URL pública de la web (hasta 90s)...")
+web_url = wait_for_tunnel_url(web_tunnel, timeout=90, label="túnel web")
+if web_url:
+    print(f"  Web pública: {web_url} ✓")
+    drain(web_tunnel, "tunnel-web")
+else:
+    print("  [WARN] no se capturó URL web.")
+    web_url = None
+
 # ----------------------------------------------------------
 # 5. Variables de entorno (ya con la URL pública real)
 # ----------------------------------------------------------
 print("\n[5/8] Configurando entorno...")
 
+# HOST debe ser loopback: en modo sample OpenMuse rechaza 0.0.0.0.
+# ALLOWED_ORIGINS debe incluir la URL pública de la WEB (origen cruzado
+# desde el iPhone), si no la API responde 403 a la interfaz.
+allowed = "http://localhost:8081,http://127.0.0.1:8081"
+if web_url:
+    allowed += f",{web_url}"
 env_vars = {
     "DATA_DIR": str(DATA_DIR),
     "WORKSPACE_MODE": "sample",
     "AGENT_BACKEND": "sample",
     "PORT": "8787",
-    "HOST": "0.0.0.0",
+    "HOST": "127.0.0.1",
     "PUBLIC_API_URL": api_url,
+    "ALLOWED_ORIGINS": allowed,
+    "CPK_INTELLIGENCE_API_KEY": cpk_key,
     "TASK_WORKER_ENABLED": "true",
     "WEB_SEARCH_ENABLED": "true",
     "COMPUTER_ENABLED": "false",
@@ -313,11 +375,18 @@ api_proc = subprocess.Popen(
 )
 drain(api_proc, "api")
 
-wait_for_http("http://localhost:8787/api/health", timeout=180, label="API")
+if not wait_for_http("http://localhost:8787/api/health", timeout=150, label="API"):
+    print("\n" + "=" * 60)
+    print("  La API no levantó. Revisá los logs [api] arriba: la causa más")
+    print("  común es una CPK_INTELLIGENCE_API_KEY inválida o sin proyecto")
+    print("  seleccionado en CopilotKit.")
+    print("  Se aborta para no dejar túneles apuntando a nada.")
+    print("=" * 60)
+    raise SystemExit("API no responde en /api/health")
 print("  API en background ✓")
 
 # ----------------------------------------------------------
-# 7. Arrancar web (8081) + túnel web
+# 7. Arrancar web (8081) — su túnel ya se creó en [4/8]
 # ----------------------------------------------------------
 print("\n[7/8] Arrancando interfaz web de OpenMuse (puerto 8081)...")
 
@@ -331,37 +400,23 @@ web_proc = subprocess.Popen(
 )
 drain(web_proc, "web")
 
-wait_for_http("http://localhost:8081/", timeout=240, label="Web")
+if not wait_for_http("http://localhost:8081/", timeout=240, label="Web"):
+    print("\n" + "=" * 60)
+    print("  La web no levantó. Revisá los logs [web] arriba.")
+    print("=" * 60)
+    raise SystemExit("Web no responde en puerto 8081")
 print("  Interfaz web en background ✓")
-
-print("\n  Iniciando túnel web hacia http://localhost:8081 ...")
-web_tunnel = subprocess.Popen(
-    [str(cloudflared_path), "tunnel", "--url", "http://localhost:8081"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-)
-
-print("  Esperando URL pública de la web (hasta 90s)...")
-web_url = wait_for_tunnel_url(web_tunnel, timeout=90, label="túnel web")
-if web_url:
-    print(f"  Web pública: {web_url} ✓")
-    drain(web_tunnel, "tunnel-web")
-else:
-    print("  [WARN] no se capturó URL web.")
-    web_url = None
 
 # ----------------------------------------------------------
 # 8. Resultado final + keep-alive
 # ----------------------------------------------------------
 print("\n" + "=" * 60)
 if web_url:
-    print("  LISTO")
-    print("  Abrí esta URL en el iPhone:")
+    print("  LISTO — en el iPhone abrí ESTA (la de la WEB):")
     print(f"  {web_url}")
     print("")
+    print("  NO abras la de la API en Safari (da 502/JSON, es solo para la app):")
     print(f"  API: {api_url}")
-    print("  Esa URL abre directamente la interfaz de OpenMuse.")
 else:
     print("  Servidores arrancados, pero no se pudo capturar la URL web.")
     print(f"  API pública (por si sirve): {api_url}")
