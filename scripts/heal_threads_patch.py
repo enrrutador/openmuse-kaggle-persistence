@@ -43,6 +43,18 @@ def apply(openmuse_dir: Path) -> None:
     app = openmuse_dir / "apps" / "server" / "src" / "app.ts"
     threads = openmuse_dir / "apps" / "mobile" / "src" / "threads.tsx"
 
+    # Reparación v19: la v18 escribió `};` en vez de `});` al cerrar
+    # POST /api/models/select y rompía el arranque de la API ([6/10]).
+    try:
+        _t = app.read_text()
+        _broken = "    return c.json({ ok: true, model: spec });\n  };\n  app.get("
+        _fixed = "    return c.json({ ok: true, model: spec });\n  });\n  app.get("
+        if _broken in _t:
+            app.write_text(_t.replace(_broken, _fixed, 1))
+            print("  [patch] app.ts reparado (cierre v18 roto) ✓")
+    except FileNotFoundError:
+        pass
+
     old_main = """    try {
       await intelligence.getOrCreateThread({
         threadId: main.threadId,
@@ -177,7 +189,7 @@ def apply(openmuse_dir: Path) -> None:
       /* sigue en memoria igual */
     }
     return c.json({ ok: true, model: spec });
-  };
+  });
   app.get("/api/main-thread", async (c) => {"""
     _patch(app, old_main_anchor, new_endpoints, "model-selector v18")
 

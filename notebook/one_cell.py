@@ -21,7 +21,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-05.18-model-selector"
+VERSION = "2026-10-05.19-syntax-fix"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
