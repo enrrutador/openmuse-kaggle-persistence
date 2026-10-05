@@ -21,7 +21,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-05.16-nvidia-free"
+VERSION = "2026-10-05.17-glm-default"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
@@ -445,7 +445,7 @@ if backend == "model":
         elif "ANTHROPIC_API_KEY" in provider_keys:
             model = "anthropic/claude-sonnet-4.5"
         elif nvidia_key:
-            model = "openai/meta/llama-3.1-8b-instruct"
+            model = "openai/z-ai/glm-5.3-flash"
     using_nvidia = (
         model.startswith("openai/")
         and "OPENAI_API_KEY" not in provider_keys
@@ -484,7 +484,7 @@ if using_nvidia:
             "moonshotai/kimi-k3": "Kimi K3",
             "nvidia/nemotron-3.5-lightning-30b-a3b": "Nemotron 3.5 Lightning 30B A3B",
             "meta/muse-glimmer-30b": "Muse Glimmer 30B",
-            "meta/llama-3.1-8b-instruct": "Llama 3.1 8B (default seguro)",
+            "nvidia/llama-3.1-nemotron-70b-instruct": "Llama 3.1 Nemotron 70B (bueno con tools)",
         }
         _found = [(k, v) for k, v in _free.items() if k in nvidia_models]
         if _found:
