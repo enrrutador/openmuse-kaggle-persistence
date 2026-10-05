@@ -12,7 +12,28 @@ Sistema de **persistencia real** para OpenMuse en Kaggle + acceso público con C
 
 ## Versión actual
 
-`2026-10-05.12-fixed-order` — corrige 404 en chat
+`2026-10-05.13-thread-heal` — corrige 404 THREAD_NOT_FOUND + menú colgado
+
+Además del orden de arranque, cada corrida aplica `scripts/heal_threads_patch.py`
+sobre `/kaggle/working/openmuse`:
+
+1. `/api/main-thread`: si Intelligence devuelve `THREAD_NOT_FOUND`/404 para el
+   hilo guardado, borra el registro local y crea un UUID fresco (`existing:false`).
+2. `/api/copilotkit/*`: traduce `THREAD_NOT_FOUND` a 409 con mensaje accionable
+   en vez de `404 404 page not found`.
+3. `ThreadsProvider`: faltaba `setLoading(false)` en el catch → spinner eterno
+   y botón menú (3 rayitas) inutilizable. Parcheado.
+
+Notas honestas:
+
+- La UI de OpenMuse alpha es solo inglés, no tiene selector de idioma.
+  Pedile al agente `Responde siempre en español` y usá Traducir de Safari para los botones.
+- El menú de 3 rayitas es la hoja de conversaciones (depende de Intelligence).
+  Si muestra error, tocá `Retry main chat` / `New side chat`.
+- Si el chat sigue en 404 tras el parche: creá un proyecto nuevo en
+  `intelligence.copilotkit.ai` (key server-only `cpk-...`, no `pk-...`),
+  poné `RESET_DATA=true` como secreto, re-ejecutá, sacalo y re-ejecutá normal,
+  y abrí la URL WEB en ventana privada.
 
 Orden de arranque (fix del 404):
 
@@ -68,7 +89,7 @@ exec(compile(open("/tmp/one_cell_latest.py").read(), "one_cell_latest.py", "exec
 ```
 
 4. Ejecutá la celda
-5. Verificá que imprima `VERSION: 2026-10-05.12-fixed-order`
+5. Verificá que imprima `VERSION: 2026-10-05.13-thread-heal`
 6. Te va a imprimir DOS URLs (tipo `https://xxxx.trycloudflare.com`):
    - `Web pública` → **esta es la que abrís en Safari del iPhone**
    - `API` → no la abras como app, es solo backend

@@ -3,6 +3,7 @@
 # Persistencia real + Cloudflare Tunnel
 # VERSION FIXED: API -> tunel API -> WEB (una sola vez con URL real) -> tunel WEB
 # (corrige 404 en chat por bundle Metro stale + kill incompleto)
+# v13: auto-heal THREAD_NOT_FOUND (regenera hilo) + fix spinner menú colgado
 # ============================================================
 
 import os
@@ -20,7 +21,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-05.12-fixed-order"
+VERSION = "2026-10-05.13-thread-heal"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
@@ -370,6 +371,16 @@ run_with_node("npm install -g pnpm@11.19.0")
 print("  Instalando dependencias de OpenMuse...")
 run_with_node("pnpm install --frozen-lockfile || pnpm install", cwd=str(OPENMUSE_DIR))
 
+# Parches thread-heal: THREAD_NOT_FOUND auto-regenera hilo + fix spinner menú.
+# (parchea /kaggle/working/openmuse en cada corrida; tsx watch lo recarga solo)
+print("  Aplicando parches thread-heal...")
+try:
+    sys.path.insert(0, str(REPO_DIR / "scripts"))
+    from heal_threads_patch import apply as apply_thread_heal
+    apply_thread_heal(OPENMUSE_DIR)
+except Exception as e:
+    print(f"  [WARN] no se pudo aplicar parche thread-heal: {e}")
+
 # ----------------------------------------------------------
 # 4. Clave CPK + cloudflared
 # ----------------------------------------------------------
@@ -617,11 +628,15 @@ ok_web_local = wait_for_http("http://127.0.0.1:8081/", timeout=30, label="Web lo
 
 ok_api_pub = False
 ok_sess_pub = False
+ok_thread = False
+sess_token = ""
 if api_url:
     ok_api_pub = wait_for_http(f"{api_url}/api/health", timeout=60, label="API pública final")
     st, payload = http_json(f"{api_url}/api/session", data={})
     print(f"  POST público /api/session -> {st} {str(payload)[:300]}")
     ok_sess_pub = (st == 200)
+    if isinstance(payload, dict) and payload.get("token"):
+        sess_token = payload["token"]
     if st == 404:
         print("  [ERROR] /api/session pública = 404. Causas: túnel API caído o OpenMuse desactualizado en /kaggle/working/openmuse.")
         print("  Fix: borrá /kaggle/working/openmuse y re-ejecutá (hace git clone fresco).")
@@ -629,6 +644,17 @@ if api_url:
         print("  (429 demasiados intentos, esperá 1 min y reintentá en la app.)")
     elif st == -1:
         print(f"  [WARN] sin conexión pública a sesión: {payload}")
+    if ok_sess_pub and sess_token:
+        tst, tpayload = http_json(
+            f"{api_url}/api/main-thread",
+            headers={"Authorization": f"Bearer {sess_token}"},
+        )
+        print(f"  GET público /api/main-thread -> {tst} {str(tpayload)[:300]}")
+        ok_thread = (tst == 200)
+        if tst == 502:
+            print("  [ERROR] Intelligence no pudo crear el hilo. Revisá CPK_INTELLIGENCE_API_KEY (tiene que ser server-only cpk-...).")
+        elif tst == 409:
+            print("  (409 hilo regenerado, reintentá en la app con nueva conversación.)")
 
 ok_web_pub = False
 if web_url:
@@ -640,6 +666,7 @@ print(f"    EXPO_PUBLIC_API_URL compilado = {api_url}")
 print(f"    API local /api/health: {'OK' if ok_local else 'FALLO'}")
 print(f"    API pública /api/health: {'OK' if ok_api_pub else 'FALLO'}")
 print(f"    POST público /api/session (lo que usa el chat): {'OK' if ok_sess_pub else 'FALLO'}")
+print(f"    GET público /api/main-thread (hilo Intelligence): {'OK' if ok_thread else 'FALLO'}")
 print(f"    Web pública: {'OK' if ok_web_pub else 'FALLO'}")
 if not ok_sess_pub:
     print("    → Si esto falla, el chat dará 404. No abras la app hasta que diga OK.")
