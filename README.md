@@ -12,7 +12,12 @@ Sistema de **persistencia real** para OpenMuse en Kaggle + acceso público con C
 
 ## Versión actual
 
-`2026-10-05.13-thread-heal` — corrige 404 THREAD_NOT_FOUND + menú colgado
+`2026-10-05.14-model-preflight` — preflight del modelo en [5/10]
+
+Si el gateway (ej. NVIDIA) devuelve 404/401 para tu `MODEL`, la celda lo dice
+ahí mismo y lista los modelos visibles para tu key. El chat daba
+`Agent execution failed: 404 404 page not found` en `convertTanStackStream`
+porque el modelo no existía para esa key, no por los túneles.
 
 Además del orden de arranque, cada corrida aplica `scripts/heal_threads_patch.py`
 sobre `/kaggle/working/openmuse`:

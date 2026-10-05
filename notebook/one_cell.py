@@ -21,7 +21,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-05.13-thread-heal"
+VERSION = "2026-10-05.14-model-preflight"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
@@ -462,6 +462,42 @@ if backend == "model":
 else:
     print("  Agente de ejemplo (sample). Para modelo real agregá NVIDIA/GOOGLE/OPENAI/ANTHROPIC_API_KEY.")
 
+# Preflight del modelo: detecta ANTES de arrancar si el gateway responde 404/401.
+# El 404 del chat en convertTanStackStream viene de acá, no de los túneles.
+model_preflight = "skip (backend=sample o provider nativo)"
+if backend == "model" and model.startswith("openai/"):
+    _base = "https://integrate.api.nvidia.com/v1" if using_nvidia else "https://api.openai.com/v1"
+    _key = provider_keys.get("OPENAI_API_KEY", "")
+    _mid = model.split("/", 1)[1]
+    print(f"  Preflight modelo: POST {_base}/chat/completions model={_mid} ...")
+    _st, _pay = http_json(
+        f"{_base}/chat/completions",
+        data={"model": _mid, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+        headers={"Authorization": f"Bearer {_key}"},
+        timeout=30,
+    )
+    if _st == 200:
+        model_preflight = "OK"
+        print("  Modelo responde ✓ (preflight OK)")
+    else:
+        model_preflight = f"FALLO {_st}"
+        print(f"  [ERROR] preflight modelo -> {_st} {str(_pay)[:500]}")
+        if _st == 404:
+            print("  El gateway no tiene ese modelo para tu key (típico NVIDIA sin entitlement).")
+            try:
+                _lst, _lp = http_json(f"{_base}/models", headers={"Authorization": f"Bearer {_key}"}, timeout=20)
+                if _lst == 200 and isinstance(_lp, dict) and isinstance(_lp.get("data"), list):
+                    _ids = [m.get("id") for m in _lp["data"] if isinstance(m, dict)][:15]
+                    print(f"  Modelos visibles para tu key: {_ids}")
+                    print("  Fix: poné secreto MODEL=openai/<uno-de-esos> y re-ejecutá.")
+                else:
+                    print(f"  No pude listar modelos ({_lst}). Revisá la key.")
+            except Exception as _e:
+                print(f"  No pude listar modelos: {_e}")
+        elif _st == 401:
+            print("  Key inválida o vencida. Regenerala y re-ejecutá.")
+        print("  El chat dará 404 hasta que el preflight diga OK.")
+
 # Env base: servicios locales primero. CORS permisivo para el primer arranque.
 env_vars = {
     "DATA_DIR": str(DATA_DIR),
@@ -666,6 +702,7 @@ print(f"    EXPO_PUBLIC_API_URL compilado = {api_url}")
 print(f"    API local /api/health: {'OK' if ok_local else 'FALLO'}")
 print(f"    API pública /api/health: {'OK' if ok_api_pub else 'FALLO'}")
 print(f"    POST público /api/session (lo que usa el chat): {'OK' if ok_sess_pub else 'FALLO'}")
+print(f"    Modelo preflight [5/10]: {model_preflight}")
 print(f"    GET público /api/main-thread (hilo Intelligence): {'OK' if ok_thread else 'FALLO'}")
 print(f"    Web pública: {'OK' if ok_web_pub else 'FALLO'}")
 if not ok_sess_pub:
