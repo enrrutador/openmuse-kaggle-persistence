@@ -21,7 +21,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-05.14-model-preflight"
+VERSION = "2026-10-05.15-nvidia-list"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
@@ -445,7 +445,7 @@ if backend == "model":
         elif "ANTHROPIC_API_KEY" in provider_keys:
             model = "anthropic/claude-sonnet-4.5"
         elif nvidia_key:
-            model = "openai/moonshotai/kimi-k3"
+            model = "openai/meta/llama-3.1-8b-instruct"
     using_nvidia = (
         model.startswith("openai/")
         and "OPENAI_API_KEY" not in provider_keys
@@ -459,6 +459,29 @@ if backend == "model":
             print("  Gateway NVIDIA NIM ✓")
     else:
         print("  [WARN] backend=model pero falta MODEL o provider key")
+
+# Lista de modelos NVIDIA de TU key para que elijas con el secreto MODEL.
+# (build.nvidia.com marca cuáles tienen endpoint gratis; acá salen los que tu key ve.)
+nvidia_models = []
+if using_nvidia:
+    _lst, _lp = http_json(
+        "https://integrate.api.nvidia.com/v1/models",
+        headers={"Authorization": f"Bearer {provider_keys.get('OPENAI_API_KEY', '')}"},
+        timeout=20,
+    )
+    if _lst == 200 and isinstance(_lp, dict) and isinstance(_lp.get("data"), list):
+        nvidia_models = sorted({m.get("id") for m in _lp["data"] if isinstance(m, dict) and m.get("id")})
+    if nvidia_models:
+        print(f"  Modelos NVIDIA para tu key ({len(nvidia_models)}):")
+        _cur = model.split("/", 1)[1] if model.startswith("openai/") else model
+        for _i, _id in enumerate(nvidia_models, 1):
+            _mark = "  <-- actual" if _id == _cur else ""
+            print(f"    {_i:3d}. MODEL=openai/{_id}{_mark}")
+        print("  Para cambiar: secreto MODEL=openai/<id> y re-ejecutá.")
+        if _cur not in nvidia_models:
+            print(f"  [WARN] tu MODEL actual ({model}) no está en la lista de tu key.")
+    else:
+        print(f"  [WARN] no pude listar modelos NVIDIA ({_lst}). Revisá NVIDIA_API_KEY.")
 else:
     print("  Agente de ejemplo (sample). Para modelo real agregá NVIDIA/GOOGLE/OPENAI/ANTHROPIC_API_KEY.")
 
@@ -483,17 +506,8 @@ if backend == "model" and model.startswith("openai/"):
         model_preflight = f"FALLO {_st}"
         print(f"  [ERROR] preflight modelo -> {_st} {str(_pay)[:500]}")
         if _st == 404:
-            print("  El gateway no tiene ese modelo para tu key (típico NVIDIA sin entitlement).")
-            try:
-                _lst, _lp = http_json(f"{_base}/models", headers={"Authorization": f"Bearer {_key}"}, timeout=20)
-                if _lst == 200 and isinstance(_lp, dict) and isinstance(_lp.get("data"), list):
-                    _ids = [m.get("id") for m in _lp["data"] if isinstance(m, dict)][:15]
-                    print(f"  Modelos visibles para tu key: {_ids}")
-                    print("  Fix: poné secreto MODEL=openai/<uno-de-esos> y re-ejecutá.")
-                else:
-                    print(f"  No pude listar modelos ({_lst}). Revisá la key.")
-            except Exception as _e:
-                print(f"  No pude listar modelos: {_e}")
+            print("  El gateway no tiene ese modelo para tu key. Elegí uno de la lista de arriba")
+            print("  con secreto MODEL=openai/<id> y re-ejecutá.")
         elif _st == 401:
             print("  Key inválida o vencida. Regenerala y re-ejecutá.")
         print("  El chat dará 404 hasta que el preflight diga OK.")
