@@ -112,3 +112,10 @@ exec(compile(open("/tmp/one_cell_latest.py").read(), "one_cell_latest.py", "exec
 ## Repo
 
 https://github.com/enrrutador/openmuse-kaggle-persistence
+
+## Selector de modelos en la app (v18+)
+
+Sin re-ejecutar la celda: en la app andá al tab Apps (abajo) → botón
+`Model: <actual>` arriba del todo → se abre la lista del gateway con filtro →
+tocás uno y queda activo al instante (sin reiniciar) y persiste entre corridas.
+El secreto `MODEL` de Kaggle lo pisa si lo ponés.
