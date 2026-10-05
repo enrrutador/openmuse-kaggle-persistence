@@ -21,7 +21,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-05.15-nvidia-list"
+VERSION = "2026-10-05.16-nvidia-free"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
@@ -478,6 +478,22 @@ if using_nvidia:
             _mark = "  <-- actual" if _id == _cur else ""
             print(f"    {_i:3d}. MODEL=openai/{_id}{_mark}")
         print("  Para cambiar: secreto MODEL=openai/<id> y re-ejecutá.")
+        # Los free de la foto, con su ID exacto de API (si tu key los ve):
+        _free = {
+            "z-ai/glm-5.3-flash": "GLM-5.3-Flash",
+            "moonshotai/kimi-k3": "Kimi K3",
+            "nvidia/nemotron-3.5-lightning-30b-a3b": "Nemotron 3.5 Lightning 30B A3B",
+            "meta/muse-glimmer-30b": "Muse Glimmer 30B",
+            "meta/llama-3.1-8b-instruct": "Llama 3.1 8B (default seguro)",
+        }
+        _found = [(k, v) for k, v in _free.items() if k in nvidia_models]
+        if _found:
+            print("  Free de tu foto visibles para tu key:")
+            for _id, _name in _found:
+                _mark = "  <-- actual" if _id == _cur else ""
+                print(f"    - {_name}: MODEL=openai/{_id}{_mark}")
+            print("  Nota: Kimi K3 pasa el preflight pero el agente lo rechaza (404).")
+            print("  Si Kimi falla en el chat, usá GLM-5.3-Flash o Llama 3.1 8B.")
         if _cur not in nvidia_models:
             print(f"  [WARN] tu MODEL actual ({model}) no está en la lista de tu key.")
     else:
