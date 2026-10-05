@@ -1,23 +1,26 @@
 # ============================================================
 # OPENMUSE EN KAGGLE - TODO EN UNA SOLA CELDA
 # Persistencia real + Cloudflare Tunnel
-# VERSION DIRECT: servicios primero → túneles después
-# (sin connection refused en el arranque)
+# VERSION FIXED: API -> tunel API -> WEB (una sola vez con URL real) -> tunel WEB
+# (corrige 404 en chat por bundle Metro stale + kill incompleto)
 # ============================================================
 
 import os
 import re
 import sys
 import time
+import json
+import socket
 import subprocess
 import threading
 import zipfile
 import shutil
 import urllib.request
+import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-04.10-direct"
+VERSION = "2026-10-05.12-fixed-order"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
@@ -70,6 +73,31 @@ def wait_for_http(url, timeout=180, label="servicio"):
     return False
 
 
+def http_json(url, data=None, headers=None, timeout=15):
+    """GET (data=None) o POST JSON. Retorna (status, payload)."""
+    hdrs = dict(headers or {})
+    body = None
+    if data is not None:
+        body = json.dumps(data).encode()
+        hdrs.setdefault("Content-Type", "application/json")
+    req = urllib.request.Request(url, data=body, headers=hdrs, method="POST" if data is not None else "GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode(errors="replace")
+            try:
+                return r.status, json.loads(raw) if raw else {}
+            except Exception:
+                return r.status, {"_raw": raw[:500]}
+    except urllib.error.HTTPError as e:
+        try:
+            raw = e.read().decode(errors="replace")
+        except Exception:
+            raw = ""
+        return e.code, {"_raw": raw[:1000]}
+    except Exception as e:
+        return -1, {"_error": str(e)[:500]}
+
+
 def drain(proc, prefix):
     """Hilo daemon que imprime logs sin bloquear el pipe."""
     def _run():
@@ -105,10 +133,62 @@ def get_cpk_key():
     return get_secret("CPK_INTELLIGENCE_API_KEY")
 
 
+def port_open(port, host="127.0.0.1"):
+    s = socket.socket()
+    s.settimeout(1)
+    try:
+        s.connect((host, port))
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
 def kill_port(port):
     try:
         subprocess.run(["fuser", "-k", f"{port}/tcp"],
                        capture_output=True, timeout=10)
+    except Exception:
+        pass
+    # Fallback por si fuser no existe: intentar lsof
+    try:
+        r = subprocess.run(["lsof", "-ti", f":{port}"],
+                           capture_output=True, text=True, timeout=10)
+        for pid in (r.stdout or "").split():
+            try:
+                subprocess.run(["kill", "-9", pid.strip()],
+                               capture_output=True, timeout=5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def kill_patterns():
+    for pat in ("cloudflared", "pnpm dev", "expo start", "tsx watch",
+                "tsx apps/server", "metro", "openmuse"):
+        try:
+            subprocess.run(["pkill", "-9", "-f", pat],
+                           capture_output=True, timeout=10)
+        except Exception:
+            pass
+
+
+def stop_proc(proc, label="proc", timeout=8):
+    """Para un Popen de forma robusta (terminate -> kill + pkill fallback)."""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=timeout)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -133,18 +213,23 @@ def write_env(path, env_vars):
 
 
 # ----------------------------------------------------------
-# 0. Limpieza de corridas anteriores
+# 0. Limpieza de corridas anteriores (robusta)
 # ----------------------------------------------------------
-print("[0/9] Liberando procesos/puertos de corridas anteriores...")
+print("[0/10] Liberando procesos/puertos de corridas anteriores...")
+kill_patterns()
 for _port in (8787, 8081):
     kill_port(_port)
-try:
-    subprocess.run(["pkill", "-f", "cloudflared"],
-                   capture_output=True, timeout=10)
-except Exception:
-    pass
+time.sleep(3)
+# Segundo intento por si algo reapareció
+kill_patterns()
+for _port in (8787, 8081):
+    if port_open(_port):
+        kill_port(_port)
 time.sleep(2)
-print("  Puertos liberados ✓")
+if port_open(8787) or port_open(8081):
+    print("  [WARN] algún puerto sigue ocupado, sigo igual (puede fallar el bind).")
+else:
+    print("  Puertos liberados ✓")
 
 
 # ----------------------------------------------------------
@@ -152,13 +237,13 @@ print("  Puertos liberados ✓")
 # ----------------------------------------------------------
 REPO_DIR = Path("/kaggle/working/openmuse-kaggle-persistence")
 if not REPO_DIR.exists():
-    print("\n[1/9] Clonando sistema de persistencia...")
+    print("\n[1/10] Clonando sistema de persistencia...")
     subprocess.run(
         ["git", "clone", "https://github.com/enrrutador/openmuse-kaggle-persistence.git", str(REPO_DIR)],
         check=True,
     )
 else:
-    print("\n[1/9] Sistema de persistencia ya existe. Actualizando...")
+    print("\n[1/10] Sistema de persistencia ya existe. Actualizando...")
     try:
         subprocess.run(["git", "-C", str(REPO_DIR), "pull", "--ff-only"], check=True)
         print("  Repo actualizado ✓")
@@ -170,7 +255,7 @@ sys.path.insert(0, str(REPO_DIR))
 # ----------------------------------------------------------
 # 2. Sistema de persistencia
 # ----------------------------------------------------------
-print("[2/9] Configurando persistencia...")
+print("[2/10] Configurando persistencia...")
 
 DATA_DIR = Path("/kaggle/working/openmuse-data")
 STATE_ZIP = Path("/kaggle/working/openmuse_state.zip")
@@ -255,7 +340,7 @@ print("  Auto-save cada 5 minutos activado ✓")
 # ----------------------------------------------------------
 # 3. Instalar OpenMuse
 # ----------------------------------------------------------
-print("\n[3/9] Instalando OpenMuse (puede tardar)...")
+print("\n[3/10] Instalando OpenMuse (puede tardar)...")
 
 OPENMUSE_DIR = Path("/kaggle/working/openmuse")
 if not OPENMUSE_DIR.exists():
@@ -286,9 +371,9 @@ print("  Instalando dependencias de OpenMuse...")
 run_with_node("pnpm install --frozen-lockfile || pnpm install", cwd=str(OPENMUSE_DIR))
 
 # ----------------------------------------------------------
-# 4. Clave CPK + cloudflared (sin arrancar túneles todavía)
+# 4. Clave CPK + cloudflared
 # ----------------------------------------------------------
-print("\n[4/9] Verificando clave CPK + cloudflared...")
+print("\n[4/10] Verificando clave CPK + cloudflared...")
 
 cpk_key = get_cpk_key()
 if not cpk_key:
@@ -319,9 +404,9 @@ else:
     print("  cloudflared ya existe ✓")
 
 # ----------------------------------------------------------
-# 5. Modelo + variables de entorno base
+# 5. Modelo + variables de entorno base (local primero)
 # ----------------------------------------------------------
-print("\n[5/9] Configurando entorno base...")
+print("\n[5/10] Configurando entorno base...")
 
 provider_keys = {}
 for _k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
@@ -366,7 +451,7 @@ if backend == "model":
 else:
     print("  Agente de ejemplo (sample). Para modelo real agregá NVIDIA/GOOGLE/OPENAI/ANTHROPIC_API_KEY.")
 
-# Env temporal: servicios locales primero. CORS permisivo para el primer arranque.
+# Env base: servicios locales primero. CORS permisivo para el primer arranque.
 env_vars = {
     "DATA_DIR": str(DATA_DIR),
     "WORKSPACE_MODE": "sample",
@@ -395,9 +480,9 @@ write_env(env_path, env_vars)
 print("  .env base escrito ✓ (servicios locales primero)")
 
 # ----------------------------------------------------------
-# 6. Arrancar API (puerto 8787) — ANTES de los túneles
+# 6. Arrancar SOLO API (puerto 8787) — ANTES de cualquier túnel
 # ----------------------------------------------------------
-print("\n[6/9] Arrancando API de OpenMuse (puerto 8787)...")
+print("\n[6/10] Arrancando API de OpenMuse (puerto 8787)...")
 
 api_env = os.environ.copy()
 api_proc = start_node_proc("pnpm dev", OPENMUSE_DIR, api_env, "api")
@@ -408,27 +493,18 @@ if not wait_for_http("http://127.0.0.1:8787/api/health", timeout=150, label="API
     print("  Causa común: CPK_INTELLIGENCE_API_KEY inválida.")
     print("=" * 60)
     raise SystemExit("API no responde en /api/health")
+
+# Verificación local de sesión (esto es lo que el chat usa; si da 404 acá, el chat dará 404)
+st, payload = http_json("http://127.0.0.1:8787/api/session", data={})
+print(f"  POST /api/session local -> {st} {str(payload)[:200]}")
+if st == 404:
+    print("  [WARN] /api/session local da 404: versión de OpenMuse incompatible. Revisá git pull de /kaggle/working/openmuse.")
 print("  API en background ✓")
 
 # ----------------------------------------------------------
-# 7. Arrancar WEB (puerto 8081) — ANTES de los túneles
+# 7. Túnel API primero → obtener api_url pública real
 # ----------------------------------------------------------
-print("\n[7/9] Arrancando interfaz web de OpenMuse (puerto 8081)...")
-
-web_env = os.environ.copy()
-web_proc = start_node_proc("pnpm dev:web", OPENMUSE_DIR, web_env, "web")
-
-if not wait_for_http("http://127.0.0.1:8081/", timeout=240, label="Web"):
-    print("\n" + "=" * 60)
-    print("  La web no levantó. Revisá los logs [web] arriba.")
-    print("=" * 60)
-    raise SystemExit("Web no responde en puerto 8081")
-print("  Interfaz web en background ✓")
-
-# ----------------------------------------------------------
-# 8. Ahora sí: túneles (origen ya está arriba → sin connection refused)
-# ----------------------------------------------------------
-print("\n[8/9] Creando túneles Cloudflare (origen ya vivo)...")
+print("\n[7/10] Creando túnel API (origen ya vivo)...")
 
 print("  Túnel API → http://127.0.0.1:8787 ...")
 api_tunnel = subprocess.Popen(
@@ -442,8 +518,52 @@ if api_url:
     print(f"  API pública: {api_url} ✓")
     drain(api_tunnel, "tunnel-api")
 else:
-    print("  [WARN] no se capturó URL de API")
-    api_url = "http://127.0.0.1:8787"
+    print("  [ERROR] no se capturó URL de API, no puedo seguir sin EXPO_PUBLIC_API_URL real.")
+    raise SystemExit("Sin api_url no se puede compilar la web (causaría 404 en chat)")
+
+# Verificar que la API responde A TRAVÉS del túnel (Cloudflare a veces tarda)
+print("  Verificando API pública a través del túnel...")
+if not wait_for_http(f"{api_url}/api/health", timeout=120, label="API pública"):
+    print("  [WARN] la API pública no responde todavía, sigo igual (puede ser delay de Cloudflare).")
+else:
+    st, payload = http_json(f"{api_url}/api/session", data={})
+    print(f"  POST {api_url}/api/session -> {st} {str(payload)[:200]}")
+    if st == 404:
+        print("  [ERROR] la API pública da 404 en /api/session. El túnel apunta mal.")
+    elif st == -1:
+        print(f"  [WARN] no se pudo validar sesión pública: {payload}")
+
+# ----------------------------------------------------------
+# 8. Arrancar WEB UNA SOLA VEZ, ya con la api_url real (con --clear)
+# FIX 404: antes se arrancaba con localhost y se cacheaba en Metro.
+# ----------------------------------------------------------
+print("\n[8/10] Arrancando interfaz web UNA vez con URL real (puerto 8081)...")
+
+env_vars["PUBLIC_API_URL"] = api_url
+env_vars["EXPO_PUBLIC_API_URL"] = api_url
+# CORS temporal: localhost + api pública. El web_url aún no existe, se agrega en [9/10].
+env_vars["ALLOWED_ORIGINS"] = "http://localhost:8081,http://127.0.0.1:8081"
+for k, v in env_vars.items():
+    os.environ[k] = v
+write_env(env_path, env_vars)
+print(f"  .env web ✓ (EXPO_PUBLIC_API_URL={api_url})")
+
+web_env = os.environ.copy()
+# --clear evita bundle stale de corridas anteriores con localhost
+web_proc = start_node_proc("pnpm --dir apps/mobile web -- --clear", OPENMUSE_DIR, web_env, "web")
+
+if not wait_for_http("http://127.0.0.1:8081/", timeout=240, label="Web"):
+    print("\n" + "=" * 60)
+    print("  La web no levantó. Revisá los logs [web] arriba.")
+    print("=" * 60)
+    raise SystemExit("Web no responde en puerto 8081")
+print("  Interfaz web en background ✓ (compilada contra API pública real)")
+
+# ----------------------------------------------------------
+# 9. Túnel WEB + reinicio SOLO de API para CORS final
+# La WEB NO se reinicia (su bundle ya es correcto).
+# ----------------------------------------------------------
+print("\n[9/10] Creando túnel WEB + ajuste CORS final...")
 
 print("  Túnel WEB → http://127.0.0.1:8081 ...")
 web_tunnel = subprocess.Popen(
@@ -460,11 +580,6 @@ else:
     print("  [WARN] no se capturó URL web")
     web_url = None
 
-# ----------------------------------------------------------
-# 9. Reinicio rápido con URLs públicas (CORS + Expo)
-# ----------------------------------------------------------
-print("\n[9/9] Aplicando URLs públicas (CORS + EXPO_PUBLIC_API_URL)...")
-
 allowed = "http://localhost:8081,http://127.0.0.1:8081"
 if web_url:
     allowed += f",{web_url}"
@@ -479,34 +594,56 @@ write_env(env_path, env_vars)
 print(f"  .env final ✓ (PUBLIC_API_URL={api_url})")
 print(f"  ALLOWED_ORIGINS={allowed}")
 
-# Reiniciar API y WEB con el env correcto (los túneles siguen apuntando a los puertos)
-print("  Reiniciando API y WEB con URLs públicas...")
-try:
-    api_proc.terminate()
-except Exception:
-    pass
-try:
-    web_proc.terminate()
-except Exception:
-    pass
-time.sleep(2)
+# Reiniciar SOLO API con el env correcto (el túnel sigue apuntando al puerto 8787)
+print("  Reiniciando SOLO API con CORS final (la WEB queda intacta)...")
+stop_proc(api_proc, "api")
 kill_port(8787)
-kill_port(8081)
-time.sleep(1)
+time.sleep(2)
 
 api_env = os.environ.copy()
 api_proc = start_node_proc("pnpm dev", OPENMUSE_DIR, api_env, "api")
 if not wait_for_http("http://127.0.0.1:8787/api/health", timeout=120, label="API (reinicio)"):
-    print("  [WARN] API no respondió tras reinicio; los túneles pueden seguir con la instancia anterior")
+    print("  [WARN] API no respondió tras reinicio; revisá logs [api]")
 else:
     print("  API reiniciada ✓")
 
-web_env = os.environ.copy()
-web_proc = start_node_proc("pnpm dev:web", OPENMUSE_DIR, web_env, "web")
-if not wait_for_http("http://127.0.0.1:8081/", timeout=180, label="Web (reinicio)"):
-    print("  [WARN] Web no respondió tras reinicio")
-else:
-    print("  Web reiniciada ✓")
+# ----------------------------------------------------------
+# 10. Verificación final end-to-end (esto evita el 404 en chat)
+# ----------------------------------------------------------
+print("\n[10/10] Verificación final...")
+
+ok_local = wait_for_http("http://127.0.0.1:8787/api/health", timeout=30, label="API local final")
+ok_web_local = wait_for_http("http://127.0.0.1:8081/", timeout=30, label="Web local final")
+
+ok_api_pub = False
+ok_sess_pub = False
+if api_url:
+    ok_api_pub = wait_for_http(f"{api_url}/api/health", timeout=60, label="API pública final")
+    st, payload = http_json(f"{api_url}/api/session", data={})
+    print(f"  POST público /api/session -> {st} {str(payload)[:300]}")
+    ok_sess_pub = (st == 200)
+    if st == 404:
+        print("  [ERROR] /api/session pública = 404. Causas: túnel API caído o OpenMuse desactualizado en /kaggle/working/openmuse.")
+        print("  Fix: borrá /kaggle/working/openmuse y re-ejecutá (hace git clone fresco).")
+    elif st == 429:
+        print("  (429 demasiados intentos, esperá 1 min y reintentá en la app.)")
+    elif st == -1:
+        print(f"  [WARN] sin conexión pública a sesión: {payload}")
+
+ok_web_pub = False
+if web_url:
+    ok_web_pub = wait_for_http(web_url + "/", timeout=60, label="Web pública final")
+
+print("")
+print("  Diagnóstico chat:")
+print(f"    EXPO_PUBLIC_API_URL compilado = {api_url}")
+print(f"    API local /api/health: {'OK' if ok_local else 'FALLO'}")
+print(f"    API pública /api/health: {'OK' if ok_api_pub else 'FALLO'}")
+print(f"    POST público /api/session (lo que usa el chat): {'OK' if ok_sess_pub else 'FALLO'}")
+print(f"    Web pública: {'OK' if ok_web_pub else 'FALLO'}")
+if not ok_sess_pub:
+    print("    → Si esto falla, el chat dará 404. No abras la app hasta que diga OK.")
+    print("    → Revisá: 1) túnel API vivo ([tunnel-api] sin errores), 2) ALLOWED_ORIGINS incluye tu web_url, 3) CPK key válida.")
 
 # ----------------------------------------------------------
 # Resultado final + keep-alive
@@ -518,6 +655,11 @@ if web_url:
     print("")
     print("  NO abras la de la API en Safari (es solo backend):")
     print(f"  API: {api_url}")
+    print("")
+    print("  Cómo usar:")
+    print("  - En modo sample: tocá 'Open workspace' sin key (datos de ejemplo: Alex).")
+    print("  - Para modelo real: agregá NVIDIA_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY")
+    print("    como secreto de Kaggle y re-ejecutá (backend=model solo).")
 else:
     print("  Servidores arrancados, pero no se pudo capturar la URL web.")
     print(f"  API pública (por si sirve): {api_url}")

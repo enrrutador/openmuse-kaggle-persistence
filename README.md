@@ -12,18 +12,24 @@ Sistema de **persistencia real** para OpenMuse en Kaggle + acceso público con C
 
 ## Versión actual
 
-`2026-10-04.10-direct`
+`2026-10-05.12-fixed-order` — corrige 404 en chat
 
-Orden de arranque:
+Orden de arranque (fix del 404):
 
-1. Limpieza de puertos
+1. Limpieza robusta (pkill cloudflared/pnpm/expo + fuser 8787/8081)
 2. Persistencia (restore + auto-save)
 3. Instalar OpenMuse
 4. Verificar `CPK_INTELLIGENCE_API_KEY`
-5. Arrancar **API** (8787) y **Web** (8081) en local
-6. Cuando ambos responden → crear túneles Cloudflare
-7. Reinicio rápido con URLs públicas (CORS + Expo)
-8. Keep-alive
+5. Arrancar **solo API** (8787) en local + verificar `POST /api/session`
+6. Crear **túnel API** → obtener `api_url` real + verificar salud pública
+7. Arrancar **WEB una sola vez** ya con `EXPO_PUBLIC_API_URL=api_url` y `--clear`
+8. Crear **túnel WEB** → obtener `web_url`
+9. Reiniciar **solo API** para CORS final (la WEB queda intacta, su bundle ya es correcto)
+10. Verificación end-to-end + keep-alive
+
+Por qué existía el 404: la versión anterior arrancaba WEB con `localhost`,
+Metro cacheaba ese bundle, y el reinicio con `terminate()` no mataba los hijos.
+El iPhone pedía `http://127.0.0.1:8787/api/copilotkit` y fallaba.
 
 ## Requisito: CPK_INTELLIGENCE_API_KEY
 
@@ -62,9 +68,14 @@ exec(compile(open("/tmp/one_cell_latest.py").read(), "one_cell_latest.py", "exec
 ```
 
 4. Ejecutá la celda
-5. Verificá que imprima `VERSION: 2026-10-04.10-direct`
-6. Te va a imprimir una URL (tipo `https://xxxx.trycloudflare.com`)
-7. Abrí esa URL en Safari del iPhone → se abre OpenMuse
+5. Verificá que imprima `VERSION: 2026-10-05.12-fixed-order`
+6. Te va a imprimir DOS URLs (tipo `https://xxxx.trycloudflare.com`):
+   - `Web pública` → **esta es la que abrís en Safari del iPhone**
+   - `API` → no la abras como app, es solo backend
+7. En la app tocá `Open workspace` sin key en modo sample.
+   Si el chat da 404, mirá el bloque `Diagnóstico chat` que imprime la celda:
+   `POST público /api/session` tiene que decir `OK`. Si dice `FALLO`,
+   no abras la app: el túnel API se cayó o la CPK key es inválida.
 
 ## Importante
 
