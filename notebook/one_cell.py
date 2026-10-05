@@ -21,7 +21,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "2026-10-05.17-glm-default"
+VERSION = "2026-10-05.18-model-selector"
 
 print("=" * 60)
 print("  OpenMuse Kaggle - Persistencia + Interfaz Web")
@@ -434,6 +434,18 @@ backend = (get_secret("AGENT_BACKEND", quiet=True) or "").strip() or (
     "model" if (provider_keys or nvidia_key) else "sample"
 )
 model = (get_secret("MODEL", quiet=True) or "").strip()
+if not model:
+    # Override elegido desde el selector de la app (Apps & settings).
+    # El secreto MODEL lo pisa si lo ponés. Vive en DATA_DIR → persiste.
+    try:
+        _ovf = DATA_DIR / "model-override.json"
+        if _ovf.exists():
+            _om = (json.loads(_ovf.read_text()) or {}).get("model", "")
+            if isinstance(_om, str) and _om.strip():
+                model = _om.strip()
+                print(f"  Modelo del selector de la app: {model} ✓ (secreto MODEL lo pisa)")
+    except Exception as _e:
+        print(f"  [WARN] no pude leer model-override.json: {_e}")
 using_nvidia = False
 
 if backend == "model":

@@ -9,6 +9,11 @@
    "404 404 page not found".
 3. apps/mobile/src/threads.tsx :: ThreadsProvider
    En catch faltaba setLoading(false) -> spinner eterno y menú inutilizable.
+4. apps/server/src/app.ts :: GET /api/models + POST /api/models/select
+   Selector de modelos del gateway NVIDIA sin reiniciar (config.model vive
+   en memoria y se lee por turno). Persiste en DATA_DIR/model-override.json.
+5. apps/mobile/src/agent-ui.tsx :: ModelSelector en AppsScreen
+   Dropdown con filtro para elegir modelo desde la app (Apps & settings).
 """
 from __future__ import annotations
 
@@ -123,3 +128,150 @@ def apply(openmuse_dir: Path) -> None:
       });"""
 
     _patch(threads, old_catch, new_catch, "setLoading(false);\n      });")
+
+    # 4a. imports fs/path para model-override.json
+    _patch(
+        app,
+        'import { AppError } from "./errors.ts";',
+        'import { AppError } from "./errors.ts";\n'
+        'import { writeFile } from "node:fs/promises";\n'
+        'import { join } from "node:path";',
+        '"node:fs/promises"',
+    )
+
+    # 4b. endpoints del selector antes de /api/main-thread
+    old_main_anchor = '  app.get("/api/main-thread", async (c) => {'
+    new_endpoints = """  // openmuse-kaggle-persistence model-selector v18
+  const MODEL_OVERRIDE_FILE = join(config.dataDir, "model-override.json");
+  async function gatewayModels(): Promise<string[]> {
+    const base = (process.env.OPENAI_BASE_URL ?? "").replace(/\\/$/, "");
+    const key = process.env.OPENAI_API_KEY ?? "";
+    if (!base || !key) return [];
+    try {
+      const r = await fetch(`${base}/models`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      if (!r.ok) return [];
+      const j = (await r.json()) as { data?: { id?: string }[] };
+      return [...new Set((j.data ?? []).map((m) => m?.id).filter((x): x is string => Boolean(x)))].sort();
+    } catch {
+      return [];
+    }
+  }
+  app.get("/api/models", async (c) => {
+    return c.json({
+      current: config.model ?? null,
+      gateway: process.env.OPENAI_BASE_URL ?? null,
+      models: await gatewayModels(),
+    });
+  });
+  app.post("/api/models/select", async (c) => {
+    const body = z.object({ model: z.string().min(3).max(200) }).parse(await c.req.json());
+    const spec = body.model.trim();
+    if (!/^openai\\/[A-Za-z0-9_.\\-/]+$/.test(spec))
+      throw new AppError("Elegí un modelo de la lista (formato openai/<id>).", 400);
+    config.model = spec;
+    try {
+      await writeFile(MODEL_OVERRIDE_FILE, JSON.stringify({ model: spec }), "utf8");
+    } catch {
+      /* sigue en memoria igual */
+    }
+    return c.json({ ok: true, model: spec });
+  };
+  app.get("/api/main-thread", async (c) => {"""
+    _patch(app, old_main_anchor, new_endpoints, "model-selector v18")
+
+    # 5. ModelSelector en la app móvil (pantalla Apps & settings)
+    agent_ui = openmuse_dir / "apps" / "mobile" / "src" / "agent-ui.tsx"
+    old_apps_anchor = "export function AppsScreen() {"
+    new_selector = """function ModelSelector() {
+  const { api } = useWorkspace();
+  const [current, setCurrent] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [filter, setFilter] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!expanded) return;
+    let active = true;
+    setError("");
+    void api
+      .request<{ current: string | null; models: string[] }>("/api/models")
+      .then((r) => {
+        if (!active) return;
+        setCurrent(r.current || "");
+        setModels(r.models || []);
+      })
+      .catch((e) => {
+        if (active) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, expanded]);
+  async function select(id: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.request<{ model: string }>(
+        "/api/models/select",
+        { model: `openai/${id}` },
+        "POST",
+      );
+      setCurrent(r.model);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const short = (id: string) => id.split("/").pop() || id;
+  const shown = models
+    .filter((id) => id.toLowerCase().includes(filter.toLowerCase()))
+    .slice(0, 30);
+  return (
+    <View style={{ gap: 10 }}>
+      <Button onPress={() => setExpanded(!expanded)}>
+        {expanded ? "Close model selector" : `Model: ${short(current.replace(/^openai\\//, "")) || "…"}`}
+      </Button>
+      {expanded && (
+        <Card style={{ gap: 10 }}>
+          <ErrorNotice error={error} />
+          <Field
+            label="Filter models"
+            value={filter}
+            onChangeText={setFilter}
+            placeholder="e.g. glm, kimi, nemotron"
+          />
+          {shown.map((id) => (
+            <Button
+              key={id}
+              small
+              primary={current === `openai/${id}`}
+              disabled={busy}
+              onPress={() => void select(id)}
+            >
+              {short(id)}
+            </Button>
+          ))}
+          {models.length > shown.length && (
+            <Text style={s.small}>
+              Showing {shown.length} of {models.length} — refine the filter.
+            </Text>
+          )}
+          {!models.length && !error && <ActivityIndicator color={colors.blueDark} />}
+        </Card>
+      )}
+    </View>
+  );
+}
+export function AppsScreen() {"""
+    _patch(agent_ui, old_apps_anchor, new_selector, "function ModelSelector()")
+
+    _patch(
+        agent_ui,
+        "      <ConnectionsScreen query={query} />",
+        "      <ConnectionsScreen query={query} />\n      <ModelSelector />",
+        "<ModelSelector />",
+    )
